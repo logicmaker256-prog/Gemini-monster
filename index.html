@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D Dragon Hunter</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+            user-select: none; /* テキストの誤選択を防止 */
+            -webkit-user-select: none;
+        }
+
+        /* タイトル画面 */
+        #title-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 20;
+            transition: opacity 0.8s;
+        }
+        #title-screen h1 { font-size: 3rem; margin-bottom: 10px; color: #FFD700; text-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+        #start-button {
+            padding: 15px 40px; font-size: 1.5rem; font-weight: bold;
+            cursor: pointer; background-color: #ff4444; color: white;
+            border: none; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            transition: 0.2s;
+        }
+        #start-button:hover { background-color: #ff6666; transform: scale(1.05); }
+
+        /* ゲーム画面 */
+        #game-screen {
+            display: none; /* 最初は隠しておく */
+            position: relative;
+            width: 100vw; height: 100vh;
+        }
+
+        /* UIパネル共通 */
+        .ui-container {
+            position: absolute;
+            top: 15px;
+            width: 40%;
+            max-width: 300px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            border-radius: 8px;
+            color: white;
+            z-index: 10;
+            pointer-events: none; /* クリックの邪魔にならないようにする */
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .bar-bg {
+            width: 100%; height: 12px; background-color: #333; margin-top: 5px; border-radius: 6px; overflow: hidden;
+        }
+        .bar-fg {
+            height: 100%; transition: width 0.2s ease-out;
+        }
+
+        /* 左上：勇者UI */
+        #hero-ui { left: 15px; }
+        #hero-hp-bar { background-color: #32cd32; width: 100%; }
+        #hero-stamina-bar { background-color: #1e90ff; width: 100%; }
+
+        /* 右上：ドラゴンUI */
+        #dragon-ui { right: 15px; }
+        #dragon-hp-bar { background-color: #ff4444; width: 0%; } /* 初期はターゲットなしのため0% */
+
+        /* リザルトテキストとリトライボタン */
+        #result-text {
+            position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 3.5rem; font-weight: bold; text-align: center;
+            text-shadow: 3px 3px 6px black; z-index: 15; display: none;
+        }
+        #retry-button {
+            position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%);
+            padding: 15px 40px; font-size: 1.5rem; font-weight: bold; cursor: pointer;
+            background-color: #4CAF50; color: white; border: none; border-radius: 10px;
+            z-index: 15; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            transition: 0.2s;
+        }
+        #retry-button:hover { background-color: #45a049; transform: scale(1.05); }
+
+        /* 動的に変わるテキストの色（main.jsから適用されます） */
+        .damage-text { color: #ff6666; font-weight: bold; }
+        .evade-text { color: #87cefa; font-weight: bold; }
+        .chance-text { color: #FFD700; font-weight: bold; }
+        
+        /* 画面下の操作説明 */
+        #instructions {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.8); font-size: 0.9rem; text-align: center; 
+            pointer-events: none; z-index: 10; background: rgba(0, 0, 0, 0.5);
+            padding: 8px 16px; border-radius: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="title-screen">
+        <h1>3D Dragon Hunter</h1>
+        <p style="margin-bottom: 30px; font-size: 1.1rem;">
+            【移動】地面をタップ<br>
+            【攻撃】ドラゴンをタップ<br>
+            【回避】地面をダブルタップ (スタミナ消費)
+        </p>
+        <button id="start-button">GAME START</button>
+    </div>
+
+    <div id="game-screen">
+        <div id="hero-ui" class="ui-container">
+            <div id="hero-status">勇者: 待機中</div>
+            <div style="font-size: 0.75rem; margin-top: 8px; color: #ddd;">HP</div>
+            <div class="bar-bg"><div id="hero-hp-bar" class="bar-fg"></div></div>
+            <div style="font-size: 0.75rem; margin-top: 8px; color: #ddd;">STAMINA</div>
+            <div class="bar-bg"><div id="hero-stamina-bar" class="bar-fg"></div></div>
+        </div>
+
+        <div id="dragon-ui" class="ui-container">
+            <div id="dragon-status">ドラゴン: 待機中</div>
+            <div style="font-size: 0.75rem; margin-top: 8px; color: #ddd;">TARGET HP</div>
+            <div class="bar-bg"><div id="dragon-hp-bar" class="bar-fg"></div></div>
+        </div>
+
+        <div id="result-text"></div>
+        <button id="retry-button">RETRY</button>
+        
+        <div id="instructions">
+            3体のドラゴンを討伐しろ！
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="models.js"></script>
+    <script src="setup.js"></script> <script src="main.js"></script>
+</body>
+</html>
