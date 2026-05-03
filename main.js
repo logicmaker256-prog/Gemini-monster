@@ -2,12 +2,33 @@
 // メインゲームロジック (main.js)
 // ==========================================
 
-// --- 入力処理 (タップ移動・攻撃・回避) ---
+let pointerDownPos = { x: 0, y: 0 };
+let pointerDownTime = 0;
+
+// はぎ取り用変数
+let isHeroCarving = false;
+let carveEndTime = 0;
+let targetCarveDragon = null;
+
+// --- アイテム使用処理 ---
+useItemButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!isGameStarted || isGameOver || inventory.count <= 0 || isHeroCarving) return;
+
+    stats.hero.hp = stats.hero.maxHp; 
+    inventory.count--;
+    
+    UI_hero.innerHTML = `<span style="color:#00ff00;">勇者: ${inventory.name}を使用して全回復！</span>`;
+    flashModel(hero, 0x00ff00);
+    updateUI();
+});
+
 window.addEventListener('pointerdown', (event) => {
-    if (!isGameStarted || isGameOver || isHeroKnockedBack) return;
+    // はぎ取り中は操作不可
+    if (!isGameStarted || isGameOver || isHeroKnockedBack || isHeroCarving) return;
     const now = Date.now();
-    const isDoubleTap = (now - lastTapTime < 300);
-    lastTapTime = now;
+    pointerDownPos = { x: event.clientX, y: event.clientY };
+    pointerDownTime = now;
 
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1; mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
@@ -30,9 +51,7 @@ window.addEventListener('pointerdown', (event) => {
                 } else if (distance < 15) {
                     UI_hero.innerText = "勇者: 【遠距離】魔法！"; flashModel(hero, 0x005555);
                     spawnProjectile('magic', hero.position.clone(), d.position.clone(), 'hero'); lastAttackTime = now;
-                } else {
-                    UI_hero.innerText = "勇者: 遠すぎて攻撃が届かない！";
-                }
+                } else { UI_hero.innerText = "勇者: 遠すぎて攻撃が届かない！"; }
                 updateUI();
             }
         } else if (hitObject === ground) {
@@ -40,15 +59,36 @@ window.addEventListener('pointerdown', (event) => {
             p.x = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, p.x));
             p.z = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, p.z));
             targetPosition.copy(p); targetPosition.y = 0; 
+        }
+    }
+});
 
-            if (isDoubleTap && stats.hero.stamina >= DASH_STAMINA_COST && !isHeroDashing) {
+window.addEventListener('pointerup', (event) => {
+    if (!isGameStarted || isGameOver || isHeroKnockedBack || isHeroCarving) return;
+    const now = Date.now();
+    const timeDiff = now - pointerDownTime;
+    const dx = event.clientX - pointerDownPos.x;
+    const dy = event.clientY - pointerDownPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (timeDiff < 400 && dist > 30) {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1; 
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(ground);
+        if (intersects.length > 0) {
+            let p = intersects[0].point;
+            p.x = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, p.x));
+            p.z = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, p.z));
+            targetPosition.copy(p); targetPosition.y = 0; 
+
+            if (stats.hero.stamina >= DASH_STAMINA_COST && !isHeroDashing) {
                 stats.hero.stamina -= DASH_STAMINA_COST;
                 isHeroDashing = true; isHeroInvincible = true;
                 dashEndTime = now + 400; invincibleEndTime = now + 600; 
                 UI_hero.innerHTML = "<span class='evade-text'>勇者: 【回避】無敵ダッシュ！</span>";
-                hero.traverse((child) => {
-                    if (child.isMesh) { child.material.transparent = true; child.material.opacity = 0.5; child.material.emissive.setHex(0x0055ff); }
-                });
+                hero.traverse((child) => { if (child.isMesh) { child.material.transparent = true; child.material.opacity = 0.5; child.material.emissive.setHex(0x0055ff); } });
+                updateUI();
             }
         }
     }
@@ -79,6 +119,8 @@ function spawnProjectile(type, startPos, targetPos, attackerName) {
 function updateUI() {
     barHero.style.width = (Math.max(0, stats.hero.hp) / stats.hero.maxHp * 100) + '%'; 
     barStamina.style.width = (Math.max(0, stats.hero.stamina) / stats.hero.maxStamina * 100) + '%';
+    UI_item.innerText = `${inventory.name}: ${inventory.count}回`;
+    
     if (activeDragon && activeDragon.userData.hp > 0) {
         barDragon.style.width = (Math.max(0, activeDragon.userData.hp) / activeDragon.userData.maxHp * 100) + '%';
         UI_dragon.innerText = `ドラゴン (HP: ${activeDragon.userData.hp})`;
@@ -92,34 +134,37 @@ function updateUI() {
 
 retryButton.addEventListener('click', () => {
     stats.hero.hp = stats.hero.maxHp; stats.hero.stamina = stats.hero.maxStamina;
-    hero.position.set(0, 0, 0); targetPosition.copy(hero.position);
+    inventory = { name: "回復薬", count: 3 };
+    hero.position.set(0, 0, 0); hero.rotation.set(0, 0, 0); targetPosition.copy(hero.position);
+    
     dragons.forEach((d, index) => {
         if (!d.parent) scene.add(d); 
-        d.userData.hp = d.userData.maxHp; d.userData.isAggro = false; d.userData.state = 'idle'; d.getObjectByName("head").rotation.x = 0; 
+        d.userData.hp = d.userData.maxHp; d.userData.isAggro = false; d.userData.state = 'idle'; d.userData.isDead = false;
+        d.getObjectByName("head").rotation.x = 0; 
+        d.rotation.z = 0; d.position.y = 0; // 倒れた状態をリセット
+        
         let rx, rz, tooClose;
         do {
             rx = (Math.random() - 0.5) * (MAP_SIZE - 20); rz = (Math.random() - 0.5) * (MAP_SIZE - 20); tooClose = false;
             if (Math.abs(rx) < 20 && Math.abs(rz) < 20) { tooClose = true; continue; }
-            for (let j = 0; j < index; j++) {
-                if (Math.sqrt(Math.pow(rx - dragons[j].position.x, 2) + Math.pow(rz - dragons[j].position.z, 2)) < DRAGON_SPACING) { tooClose = true; break; }
-            }
+            for (let j = 0; j < index; j++) { if (Math.sqrt(Math.pow(rx - dragons[j].position.x, 2) + Math.pow(rz - dragons[j].position.z, 2)) < DRAGON_SPACING) { tooClose = true; break; } }
         } while (tooClose);
         d.position.set(rx, 0, rz); d.userData.targetPos.copy(d.position);
         d.traverse((c) => { if (c.isMesh) c.material.emissive.setHex(0x000000); });
     });
     activeDragon = null; isGameOver = false; isHeroKnockedBack = false; isHeroDashing = false; isHeroInvincible = false;
+    isHeroCarving = false; targetCarveDragon = null; // はぎ取り状態リセット
+    
     hero.traverse((child) => { if (child.isMesh) { child.material.transparent = false; child.material.opacity = 1.0; child.material.emissive.setHex(0x000000); } });
     for (let p of projectiles) scene.remove(p.mesh); projectiles = [];
-    resultText.style.display = "none"; retryButton.style.display = "none"; UI_hero.innerText = "勇者: 待機中"; UI_dragon.innerText = "ターゲットなし"; updateUI();
+    resultText.style.display = "none"; retryButton.style.display = "none"; updateUI();
 });
 
 function updateProjectiles() {
     for (let i = projectiles.length - 1; i >= 0; i--) {
         const p = projectiles[i]; p.mesh.position.addScaledVector(p.direction, p.speed); p.life--;
         let hitObstacle = false;
-        for (let obs of obstacles) {
-            if (Math.sqrt(Math.pow(p.mesh.position.x - obs.mesh.position.x, 2) + Math.pow(p.mesh.position.z - obs.mesh.position.z, 2)) < obs.radius) { hitObstacle = true; break; }
-        }
+        for (let obs of obstacles) { if (Math.sqrt(Math.pow(p.mesh.position.x - obs.mesh.position.x, 2) + Math.pow(p.mesh.position.z - obs.mesh.position.z, 2)) < obs.radius) { hitObstacle = true; break; } }
         if (hitObstacle) { finalizeProjectile(i, false); continue; }
 
         let hitDragon = false;
@@ -133,8 +178,7 @@ function updateProjectiles() {
         }
         if (hitDragon) continue;
         if (p.attacker === 'dragon' && p.mesh.position.distanceTo(hero.position) < 1.5) {
-            if (!isHeroInvincible) { stats.hero.hp -= stats.dragon.atkRanged; flashModel(hero, 0x550000); } 
-            else { UI_hero.innerHTML = "<span class='evade-text'>ブレス回避！</span>"; }
+            if (!isHeroInvincible && !isHeroCarving) { stats.hero.hp -= stats.dragon.atkRanged; flashModel(hero, 0x550000); } 
             finalizeProjectile(i, true); continue;
         }
         if (p.life <= 0) finalizeProjectile(i, false);
@@ -155,10 +199,49 @@ function animate() {
             hero.traverse((child) => { if (child.isMesh) { child.material.transparent = false; child.material.opacity = 1.0; child.material.emissive.setHex(0x000000); } });
         }
 
+        // --- はぎ取り中のアニメーション処理 ---
+        if (isHeroCarving) {
+            if (now > carveEndTime) {
+                // はぎ取り終了
+                isHeroCarving = false;
+                hero.rotation.x = 0; hero.position.y = 0;
+                
+                inventory.name = "ドラゴン肉"; 
+                inventory.count += 3; // 回復回数を3回追加
+                UI_hero.innerHTML = "<span style='color:#ffff00; font-weight:bold;'>勇者: ドラゴン肉をGET！(回復+3) 🍖</span>";
+                
+                if (targetCarveDragon && targetCarveDragon.parent) scene.remove(targetCarveDragon);
+                activeDragon = null; updateUI();
+            } else {
+                // ギコギコ動く(作業してる感を出す)
+                hero.position.y = Math.abs(Math.sin(now / 50)) * 0.2; 
+            }
+        }
+
         let aliveCount = 0; let knockBackDragon = null;
         dragons.forEach(d => {
-            if (d.userData.hp <= 0) { if (d.parent) { scene.remove(d); if (activeDragon === d) activeDragon = null; } return; }
+            if (d.userData.hp <= 0) { 
+                // ドラゴンが死んだ瞬間の処理（1回だけ実行）
+                if (!d.userData.isDead) {
+                    d.userData.isDead = true;
+                    d.rotation.z = Math.PI / 2; // コロンと倒れる
+                    d.position.y = 0.5;
+                    
+                    isHeroCarving = true; carveEndTime = now + 1500; targetCarveDragon = d; // 1.5秒はぎ取り
+                    
+                    hero.lookAt(d.position.x, 0, d.position.z);
+                    hero.rotation.x = Math.PI / 4; // しゃがむ
+                    targetPosition.copy(hero.position); // 移動ストップ
+                    
+                    UI_hero.innerHTML = "<span style='color:#ffaa00;'>勇者: はぎ取り中... 🔪</span>";
+                }
+                return; 
+            }
             aliveCount++;
+            
+            // はぎ取り中は他のドラゴンの動きを止める（親切設計）
+            if (isHeroCarving) return;
+
             const dist = hero.position.distanceTo(d.position);
             if (dist < 2.5 && !isHeroKnockedBack && !isHeroInvincible && d.userData.isAggro) { knockBackDragon = d; activeDragon = d; }
             if (!d.userData.isAggro) { d.rotation.y += 0.002; return; }
@@ -166,25 +249,21 @@ function animate() {
             if (d.userData.state === 'normal' || d.userData.state === 'idle') {
                 d.userData.state = 'normal'; 
                 if (dist < 5.0) { 
-                    if (activeDragon === d) UI_dragon.innerHTML = `<span class='damage-text'>ドラゴン: 大回転尻尾叩きつけ！ (-35)</span>`; 
                     flashModel(d, 0xff0000); 
                     if (!isHeroInvincible) stats.hero.hp -= stats.dragon.atkMelee; 
-                    else UI_hero.innerHTML = "<span class='evade-text'>回避成功！</span>";
                     d.userData.state = 'spinning'; d.userData.spinStartTime = now; d.userData.initialRotY = d.rotation.y; d.userData.recoveryEndTime = now + spinDuration + 2500; 
                 } else if (dist < 18) {
                     if (now - d.userData.lastMoveTime > 1500) {
-                        if (activeDragon === d) UI_dragon.innerText = `ドラゴン: 【遠距離】ブレス！`; flashModel(d, 0x550055);
                         spawnProjectile('breath', d.position.clone(), hero.position.clone(), 'dragon'); d.userData.lastMoveTime = now;
                     }
                 }
             }
-
             if (d.userData.state === 'spinning') {
                 const t = (now - d.userData.spinStartTime) / spinDuration;
                 if (t <= 1.0) d.rotation.y = d.userData.initialRotY + (t * Math.PI * 2);
-                else { d.userData.state = 'recovering'; d.rotation.y = d.userData.initialRotY; d.getObjectByName("head").rotation.x = 0.5; if (activeDragon === d) UI_dragon.innerHTML = "<span class='chance-text'>ドラゴン: 大きな隙を見せている！</span>"; }
+                else { d.userData.state = 'recovering'; d.rotation.y = d.userData.initialRotY; d.getObjectByName("head").rotation.x = 0.5; }
             } else if (d.userData.state === 'recovering') {
-                if (now > d.userData.recoveryEndTime) { d.userData.state = 'normal'; d.getObjectByName("head").rotation.x = 0; if (activeDragon === d) UI_dragon.innerText = "ドラゴン: 警戒中"; }
+                if (now > d.userData.recoveryEndTime) { d.userData.state = 'normal'; d.getObjectByName("head").rotation.x = 0; }
             } else if (d.userData.state === 'normal') {
                 if (now - d.userData.lastMoveTime > dragonMoveInterval) { d.userData.targetPos = hero.position.clone(); d.userData.targetPos.y = 0; d.userData.lastMoveTime = now; }
                 d.position.lerp(d.userData.targetPos, 0.02); d.lookAt(hero.position.x, d.position.y, hero.position.z);
@@ -198,7 +277,6 @@ function animate() {
 
         if (knockBackDragon) {
             isHeroKnockedBack = true; heroKnockBackEndTime = now + 500; 
-            UI_hero.innerHTML = "<span class='damage-text'>勇者: ドラゴンと激突！ぶっ飛ばされた！ (-15)</span>";
             flashModel(hero, 0xff0000); stats.hero.hp -= stats.dragon.collisionDamage; updateUI();
             const knockBackDir = new THREE.Vector3().subVectors(hero.position, knockBackDragon.position).normalize();
             targetPosition.copy(hero.position).addScaledVector(knockBackDir, 5); targetPosition.y = 0;
@@ -206,7 +284,7 @@ function animate() {
         }
         if (isHeroKnockedBack && now > heroKnockBackEndTime) isHeroKnockedBack = false;
 
-        if (hero.position.distanceTo(targetPosition) > 0.1) {
+        if (hero.position.distanceTo(targetPosition) > 0.1 && !isHeroCarving) {
             let moveSpeed = isHeroKnockedBack ? 0.2 : (isHeroDashing ? 0.35 : 0.08);
             hero.position.lerp(targetPosition, moveSpeed);
             for (let obs of obstacles) {
@@ -216,7 +294,6 @@ function animate() {
             hero.position.x = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, hero.position.x)); hero.position.z = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, hero.position.z));
             if (!isHeroKnockedBack) hero.lookAt(targetPosition.x, hero.position.y, targetPosition.z);
         }
-
         camera.position.x = hero.position.x; camera.position.z = hero.position.z + 24; updateProjectiles(); updateUI(); 
     }
     renderer.render(scene, camera);
@@ -225,4 +302,12 @@ function animate() {
 animate();
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
-startButton.addEventListener('click', () => { titleScreen.style.opacity = '0'; setTimeout(() => { titleScreen.style.display = 'none'; gameScreen.style.display = 'block'; isGameStarted = true; }, 800); });
+startButton.addEventListener('click', () => { 
+    titleScreen.style.opacity = '0'; 
+    setTimeout(() => { 
+        titleScreen.style.display = 'none'; 
+        gameScreen.style.display = 'block'; 
+        useItemButton.style.display = 'block';
+        isGameStarted = true; 
+    }, 800); 
+});

@@ -93,3 +93,8 @@ let isHeroInvincible = false; let invincibleEndTime = 0;
 const titleScreen = document.getElementById('title-screen');
 const gameScreen = document.getElementById('game-screen');
 const startButton = document.getElementById('start-button');
+
+// --- 🟢 アイテムシステム変数 ---
+let inventory = { name: "回復薬", count: 3 };
+const UI_item = document.getElementById('item-info');
+const useItemButton = document.getElementById('use-item-button');
