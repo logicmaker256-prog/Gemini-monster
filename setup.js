@@ -7,7 +7,21 @@ let isGameStarted = false;
 // --- シーン・カメラ・レンダラーの設定 ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 18, 24); camera.lookAt(0, 0, 0);
+
+// ★【追加】カメラアングル設定
+const CAMERA_SETTINGS = {
+    search: { y: 18, z: 24, lookAtY: 0, lerpSpeed: 0.05 }, // 探索：遠く、高め
+    battle: { y: 8, z: 14, lookAtY: 2, lerpSpeed: 0.08 }   // 戦闘：近く、低め、ドラゴンの胴体を狙う
+};
+// 初期状態は探索アングル
+let targetCameraY = CAMERA_SETTINGS.search.y;
+let targetCameraZ = CAMERA_SETTINGS.search.z;
+let targetLookAtY = CAMERA_SETTINGS.search.lookAtY;
+let currentLerpSpeed = CAMERA_SETTINGS.search.lerpSpeed;
+
+// 初期位置を設定
+camera.position.set(0, targetCameraY, targetCameraZ);
+camera.lookAt(0, targetLookAtY, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -87,14 +101,14 @@ const resultText = document.getElementById('result-text'); const retryButton = d
 let lastAttackTime = 0; const attackCooldown = 1500; 
 const spinDuration = 600; const dragonMoveInterval = 2000; 
 let isHeroKnockedBack = false; let heroKnockBackEndTime = 0;
-let lastTapTime = 0; let isHeroDashing = false; let dashEndTime = 0;
+let isHeroDashing = false; let dashEndTime = 0;
 let isHeroInvincible = false; let invincibleEndTime = 0;
 
 const titleScreen = document.getElementById('title-screen');
 const gameScreen = document.getElementById('game-screen');
 const startButton = document.getElementById('start-button');
 
-// --- 🟢 アイテムシステム変数 ---
+// --- アイテムシステム変数 ---
 let inventory = { name: "回復薬", count: 3 };
 const UI_item = document.getElementById('item-info');
 const useItemButton = document.getElementById('use-item-button');

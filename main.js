@@ -9,6 +9,9 @@ let isHeroCarving = false; let carveEndTime = 0; let targetCarveDragon = null;
 let isHeroAttacking = false; let heroAttackEndTime = 0;
 let dragonsHitDuringDash = []; 
 
+// ★現在のカメラターゲット高さを保持（setup.jsの初期値に合わせる）
+let currentLookAtY = CAMERA_SETTINGS.search.lookAtY;
+
 useItemButton.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!isGameStarted || isGameOver || inventory.count <= 0 || isHeroCarving) return;
@@ -93,12 +96,12 @@ window.addEventListener('pointerup', (event) => {
         }
     }
 });
-
 function flashModel(model, hexColor) {
     model.traverse((child) => { if (child.isMesh && !(model === hero && isHeroInvincible)) child.material.emissive.setHex(hexColor); });
     setTimeout(() => { if(!isGameOver) { model.traverse((child) => { if (child.isMesh) { if (model === hero && isHeroInvincible) child.material.emissive.setHex(0x0055ff); else child.material.emissive.setHex(0x000000); } }); } }, 300);
 }
 
+// ★魔法の軌道計算（ターゲットを体の中心にする）
 function spawnProjectile(type, startPos, targetPos, attackerName) {
     let color = (type === 'magic') ? 0x00ffff : 0xff00ff; 
     let size = (type === 'magic') ? 0.6 : 0.8; 
@@ -115,7 +118,39 @@ function updateUI() {
     if (stats.hero.hp <= 0 && !isGameOver) { isGameOver = true; resultText.innerText = "GAME OVER..."; resultText.style.color = "#ff4444"; resultText.style.display = "block"; retryButton.style.display = "block"; }
 }
 
-retryButton.addEventListener('click', () => { location.reload(); }); 
+// ★リトライボタン：リロードではなく初期化処理にする
+retryButton.addEventListener('click', () => {
+    // ヒーロー初期化
+    stats.hero.hp = stats.hero.maxHp; stats.hero.stamina = stats.hero.maxStamina;
+    inventory = { name: "回復薬", count: 3 };
+    hero.position.set(0, 0, 0); hero.rotation.set(0, 0, 0); targetPosition.copy(hero.position);
+    
+    // ドラゴン初期化
+    dragons.forEach((d, index) => {
+        if (!d.parent) scene.add(d); 
+        d.userData.hp = d.userData.maxHp; d.userData.isAggro = false; d.userData.state = 'idle'; d.userData.isDead = false;
+        d.getObjectByName("headGroup").rotation.y = 0; d.getObjectByName("jaw").rotation.x = 0; d.getObjectByName("wingL").rotation.z = 0; d.getObjectByName("wingR").rotation.z = 0; d.getObjectByName("body").rotation.x = 0; d.getObjectByName("legL").rotation.x = 0; d.getObjectByName("legR").rotation.x = 0;
+        d.rotation.z = 0; d.position.y = 0; 
+        
+        let rx, rz, tooClose;
+        do {
+            rx = (Math.random() - 0.5) * (MAP_SIZE - 20); rz = (Math.random() - 0.5) * (MAP_SIZE - 20); tooClose = false;
+            if (Math.abs(rx) < 20 && Math.abs(rz) < 20) { tooClose = true; continue; }
+            for (let j = 0; j < index; j++) { if (Math.sqrt(Math.pow(rx - dragons[j].position.x, 2) + Math.pow(rz - dragons[j].position.z, 2)) < DRAGON_SPACING) { tooClose = true; break; } }
+        } while (tooClose);
+        d.position.set(rx, 0, rz); d.userData.targetPos.copy(d.position);
+        d.traverse((c) => { if (c.isMesh) c.material.emissive.setHex(0x000000); });
+    });
+
+    // カメラリセット
+    targetCameraY = CAMERA_SETTINGS.search.y; targetCameraZ = CAMERA_SETTINGS.search.z; targetLookAtY = CAMERA_SETTINGS.search.lookAtY; currentLookAtY = CAMERA_SETTINGS.search.lookAtY; currentLerpSpeed = CAMERA_SETTINGS.search.lerpSpeed;
+    camera.position.set(0, targetCameraY, targetCameraZ); camera.lookAt(0, currentLookAtY, 0);
+
+    activeDragon = null; isGameOver = false; isHeroKnockedBack = false; isHeroDashing = false; isHeroInvincible = false; isHeroCarving = false; targetCarveDragon = null; 
+    hero.traverse((child) => { if (child.isMesh) { child.material.transparent = false; child.material.opacity = 1.0; child.material.emissive.setHex(0x000000); } });
+    for (let p of projectiles) scene.remove(p.mesh); projectiles = [];
+    resultText.style.display = "none"; retryButton.style.display = "none"; updateUI();
+});
 
 function updateProjectiles() {
     for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -141,7 +176,6 @@ function updateProjectiles() {
     }
 }
 function finalizeProjectile(index, isHit) { if(projectiles[index]) { scene.remove(projectiles[index].mesh); projectiles.splice(index, 1); updateUI(); } }
-
 function animate() {
     requestAnimationFrame(animate);
     if (!isGameStarted) return; 
@@ -218,9 +252,8 @@ function animate() {
             aliveCount++;
             if (isHeroCarving || !body) return; 
 
-            const dist = new THREE.Vector2(hero.position.x, hero.position.z).distanceTo(new THREE.Vector2(d.position.x, d.position.z));
-            
-            if (dist < 2.5 && d.position.y < 1.0 && !isHeroKnockedBack && !isHeroInvincible && d.userData.isAggro && d.userData.state !== 'interrupted' && d.userData.state !== 'recovering') { 
+            const dist = hero.position.distanceTo(d.position);
+            if (dist < 2.5 && !isHeroKnockedBack && !isHeroInvincible && d.userData.isAggro && d.userData.state !== 'interrupted' && d.userData.state !== 'recovering') { 
                 knockBackDragon = d; activeDragon = d; 
             }
             
@@ -237,45 +270,12 @@ function animate() {
                 jaw.rotation.x = THREE.MathUtils.lerp(jaw.rotation.x, 0, 0.1); wingL.rotation.z = Math.sin(now / 150) * 0.2 + 0.2; wingR.rotation.z = -Math.sin(now / 150) * 0.2 - 0.2; body.rotation.x = THREE.MathUtils.lerp(body.rotation.x, -0.6, 0.1); tail.rotation.x = THREE.MathUtils.lerp(tail.rotation.x, -Math.PI/2 - 0.2, 0.1);
                 legL_d.rotation.x = Math.sin(now / 80) * 0.8; legR_d.rotation.x = Math.sin(now / 80 + Math.PI) * 0.8;
 
-                // ★距離が開いたら飛んで追いかける！
-                if (dist > 18) {
-                    d.userData.state = 'flying';
-                } else {
-                    if (dist < 5.0 && now - d.userData.lastMoveTime > 1000) { 
-                        d.userData.state = 'chargingSpin'; d.userData.chargeEndTime = now + 800; d.userData.hpAtChargeStart = d.userData.hp; 
-                    } else if (dist < 15 && dist > 8 && now - d.userData.lastMoveTime > 2000) { 
-                        spawnProjectile('breath', d.position.clone(), hero.position.clone(), 'dragon'); d.userData.lastMoveTime = now; 
-                    }
-                    if (now - d.userData.lastMoveTime > dragonMoveInterval) { d.userData.targetPos = hero.position.clone(); d.userData.targetPos.y = 0; d.userData.lastMoveTime = now; }
-                    // ★歩行速度を勇者(0.08)の半分の「0.04」に
-                    d.position.lerp(d.userData.targetPos, 0.04); d.lookAt(hero.position.x, d.position.y, hero.position.z);
-                }
+                if (dist < 5.0 && now - d.userData.lastMoveTime > 1000) { 
+                    d.userData.state = 'chargingSpin'; d.userData.chargeEndTime = now + 800; d.userData.hpAtChargeStart = d.userData.hp; 
+                } else if (dist < 15 && now - d.userData.lastMoveTime > 1500) { spawnProjectile('breath', d.position.clone(), hero.position.clone(), 'dragon'); d.userData.lastMoveTime = now; }
 
-            } else if (d.userData.state === 'flying') {
-                // ★飛行モードのモーションと移動
-                wingL.rotation.z = Math.sin(now / 50) * 0.5 + 0.3; wingR.rotation.z = -Math.sin(now / 50) * 0.5 - 0.3; // 激しく羽ばたく
-                body.rotation.x = THREE.MathUtils.lerp(body.rotation.x, -0.2, 0.1); legL_d.rotation.x = 0.5; legR_d.rotation.x = 0.5; // 足を畳む
-                
-                d.position.y = THREE.MathUtils.lerp(d.position.y, 4.0, 0.05); // 上空へ
-                
-                d.userData.targetPos = hero.position.clone(); d.userData.targetPos.y = d.position.y;
-                // ★飛行速度を勇者(0.08)の1.5倍の「0.12」に
-                d.position.lerp(d.userData.targetPos, 0.12); d.lookAt(hero.position.x, d.position.y, hero.position.z);
-
-                if (dist < 8) { d.userData.state = 'landing'; d.userData.landEndTime = now + 800; }
-
-            } else if (d.userData.state === 'landing') {
-                // ★着陸モードのモーション
-                wingL.rotation.z = 0.8; wingR.rotation.z = -0.8; // 羽を広げてブレーキ
-                body.rotation.x = THREE.MathUtils.lerp(body.rotation.x, -0.8, 0.1); legL_d.rotation.x = -0.5; legR_d.rotation.x = -0.5; // 足を伸ばす
-                
-                d.position.y = THREE.MathUtils.lerp(d.position.y, 0, 0.1); // 地面へ降りる
-                d.lookAt(hero.position.x, d.position.y, hero.position.z);
-                
-                if (now > d.userData.landEndTime || d.position.y < 0.1) {
-                    d.position.y = 0; d.userData.state = 'normal'; d.userData.lastMoveTime = now;
-                }
-
+                if (now - d.userData.lastMoveTime > dragonMoveInterval) { d.userData.targetPos = hero.position.clone(); d.userData.targetPos.y = 0; d.userData.lastMoveTime = now; }
+                d.position.lerp(d.userData.targetPos, 0.025); d.lookAt(hero.position.x, d.position.y, hero.position.z);
             } else if (d.userData.state === 'chargingSpin') {
                 body.rotation.x = THREE.MathUtils.lerp(body.rotation.x, 0.4, 0.1); tail.rotation.x = THREE.MathUtils.lerp(tail.rotation.x, -Math.PI/2 + 0.8, 0.1);
                 if (d.userData.hp < d.userData.hpAtChargeStart) { d.userData.state = 'interrupted'; d.userData.interruptedEndTime = now + 1000; } 
@@ -316,7 +316,36 @@ function animate() {
             hero.position.x = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, hero.position.x)); hero.position.z = Math.max(-BOUNDARY + 1, Math.min(BOUNDARY - 1, hero.position.z));
             if (!isHeroKnockedBack) hero.lookAt(targetPosition.x, hero.position.y, targetPosition.z);
         }
-        camera.position.x = hero.position.x; camera.position.z = hero.position.z + 24; updateProjectiles(); updateUI(); 
+
+        // --- ★【改善】動的カメラシステム ---
+        // 戦闘中（アグロ状態の敵がいる）か、探索中かを判定
+        const battlingDragon = dragons.find(d => d.userData.hp > 0 && d.userData.isAggro);
+        
+        if (battlingDragon) {
+            // 戦闘中は拡大アングル
+            targetCameraY = CAMERA_SETTINGS.battle.y;
+            targetCameraZ = CAMERA_SETTINGS.battle.z;
+            targetLookAtY = CAMERA_SETTINGS.battle.lookAtY;
+            currentLerpSpeed = CAMERA_SETTINGS.battle.lerpSpeed;
+        } else if (!isHeroCarving) {
+            // 探索中は通常アングル
+            targetCameraY = CAMERA_SETTINGS.search.y;
+            targetCameraZ = CAMERA_SETTINGS.search.z;
+            targetLookAtY = CAMERA_SETTINGS.search.lookAtY;
+            currentLerpSpeed = CAMERA_SETTINGS.search.lerpSpeed;
+        }
+        // ※はぎ取り中はアングルを固定（PointerUpで設定済み）
+
+        // カメラ位置をスムーズに移動（Lerp）
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCameraY + hero.position.y, currentLerpSpeed);
+        camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCameraZ + hero.position.z, currentLerpSpeed);
+        camera.position.x = THREE.MathUtils.lerp(camera.position.x, hero.position.x, currentLerpSpeed);
+
+        // 注視点もスムーズに移動（Lerp）
+        currentLookAtY = THREE.MathUtils.lerp(currentLookAtY, targetLookAtY + hero.position.y, currentLerpSpeed);
+        camera.lookAt(hero.position.x, currentLookAtY, hero.position.z);
+
+        updateProjectiles(); updateUI(); 
     }
     renderer.render(scene, camera);
 }
